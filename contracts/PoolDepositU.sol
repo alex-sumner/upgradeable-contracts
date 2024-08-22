@@ -3,19 +3,20 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPoolDeposit2, Contribution} from "./IPoolDeposit2.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-contract PoolDepositU is IPoolDeposit2 {
+contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
     uint256 constant MAX_CONTRIBUTIONS = 100;
     uint256 constant MIN_REFUND = 1e15;
     string constant DEPOSIT_PREFIX = "d_";
     string constant CONTRACT_SUFFIX = "_rbxp";
     address public timelock;
-    address public owner;
     address public rabbit;
-    IERC20 public defaultToken;
+    address public defaultToken;
     mapping(address => bool) public supportedTokens;
-    mapping(address => uint8) public minDeposits;
+    mapping(address => uint256) public minDeposits;
 
     uint256 nextDepositNum;
     uint256 nextPoolId;
@@ -24,6 +25,11 @@ contract PoolDepositU is IPoolDeposit2 {
     event SetRabbit(address indexed rabbit);
     event SupportToken(address token, uint256 minDeposit);
     event UnsupportToken(address token);
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize(
         address _timelock,
@@ -34,29 +40,25 @@ contract PoolDepositU is IPoolDeposit2 {
         address[] memory _otherTokens,
         uint256[] memory _minDeposits
     ) public initializer {
-        nextDepositNum = 1;
-        nextPoolId = 1000;
-        timelock = _timelock;
-        owner = _owner;
-        rabbit = _rabbit;
+        __Ownable_init(_owner);
+        __UUPSUpgradeable_init();
 
-        defaultToken = IERC20(_defaultToken);
+        timelock = _timelock;
+        rabbit = _rabbit;
+        defaultToken = _defaultToken;
         supportedTokens[_defaultToken] = true;
         minDeposits[_defaultToken] = _minDeposit;
-        for (address i = 0; i < _otherTokens.length; i++) {
+        for (uint256 i = 0; i < _otherTokens.length; i++) {
             address token = _otherTokens[i];
             supportedTokens[token] = true;
             minDeposits[token] = _minDeposits[i];
         }
+        nextDepositNum = 1;
+        nextPoolId = 1000;
     }
 
     modifier onlyTimelock() {
         require(msg.sender == timelock, "ONLY_TIMELOCK");
-        _;
-    }
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "ONLY_OWNER");
         _;
     }
 
@@ -77,13 +79,8 @@ contract PoolDepositU is IPoolDeposit2 {
         emit UnsupportToken(_token);
     }
 
-    function setOwner(address _owner) external onlyTimelock {
-        owner = _owner;
-        emit SetOwner(_owner);
-    }
-
-    function allocateDepositId() private returns (string) {
-        depositNum = nextDepositNum;
+    function allocateDepositId() private returns (string memory depositId) {
+        uint256 depositNum = nextDepositNum;
         nextDepositNum++;
         return string(
             abi.encodePacked(
@@ -95,14 +92,14 @@ contract PoolDepositU is IPoolDeposit2 {
     }
 
     function allocatePoolId() private returns (uint256) {
-        poolId = nextPoolId;
+        uint256 poolId = nextPoolId;
         nextPoolId++;
         return poolId;
     }
 
     function individualDeposit(address contributor, uint256 amount) external {
         require(amount >= minDeposits[defaultToken], "AMOUNT_TOO_SMALL");
-        string depositId = allocateDepositId();
+        string memory depositId = allocateDepositId();
         emit Deposit(depositId, contributor, amount, 0, defaultToken);
         bool success = makeTransferFrom(
             msg.sender,
@@ -120,15 +117,18 @@ contract PoolDepositU is IPoolDeposit2 {
     ) external {
         require(supportedTokens[token], "UNSUPPORTED_TOKEN");
         require(amount >= minDeposits[token], "AMOUNT_TOO_SMALL");
-        string depositId = allocateDepositId();
-        emit Deposit(depositId, contributor, amount, 0, defaultToken);
+        string memory depositId = allocateDepositId();
+        emit Deposit(depositId, contributor, amount, 0, token);
+        uint256 prevBalance = IERC20(token).balanceOf(rabbit);
         bool success = makeTransferFrom(
             msg.sender,
             rabbit,
             amount,
-            defaultToken
+            token
         );
         require(success, "TRANSFER_FAILED");
+        uint256 newBalance = IERC20(token).balanceOf(rabbit);
+        require(newBalance == amount + prevBalance, "NOT_ENOUGH_TRANSFERRED");
     }
 
     function depositNative(address contributor) external payable {
@@ -136,29 +136,57 @@ contract PoolDepositU is IPoolDeposit2 {
         require(supportedTokens[native], "UNSUPPORTED_TOKEN");
         uint256 minDeposit = minDeposits[native];
         require(msg.value >= minDeposit, "AMOUNT_TOO_SMALL");
-        string depositId = allocateDepositId();
-        emit Deposit(depositId, msg.sender, msg.value, 0, native);
-        (bool success, ) = rabbit.call{value: amount}("");
+        string memory depositId = allocateDepositId();
+        emit Deposit(depositId, contributor, msg.value, 0, native);
+        (bool success, ) = rabbit.call{value: msg.value}("");
         require(success, "TRANSFER_FAILED");
     }
 
     function pooledDeposit(Contribution[] calldata contributions) external {
-        pooledDepositToken(contributions, defaultToken);
+        uint256 totalAmount = pooledDepositCommon(contributions, defaultToken);
+        bool success = makeTransferFrom(
+            msg.sender,
+            rabbit,
+            totalAmount,
+            defaultToken
+        );
+        require(success, "TRANSFER_FAILED");
     }
 
     function pooledDepositNative(
         Contribution[] calldata contributions
     ) external payable {
-        pooledDepositToken(contributions, address(0));
+        uint256 totalAmount = pooledDepositCommon(contributions, address(0));
+        require(msg.value >= totalAmount, "VALUE_TOO_SMALL");
+        if (msg.value - totalAmount >= MIN_REFUND) {
+            (bool success, ) = msg.sender.call{
+                value: msg.value - totalAmount
+            }("");
+            require(success, "REFUND_FAILED");
+        } 
     }
 
     function pooledDepositToken(
         Contribution[] calldata contributions,
         address token
-    ) external {
+    ) public {
+        uint256 totalAmount = pooledDepositCommon(contributions, token);
+        bool success = makeTransferFrom(
+            msg.sender,
+            rabbit,
+            totalAmount,
+            token
+        );
+        require(success, "TRANSFER_FAILED");
+    }
+
+    function pooledDepositCommon(
+        Contribution[] calldata contributions,
+        address token
+    ) private returns (uint256 totalAmount) {
         require(supportedTokens[token], "UNSUPPORTED_TOKEN");
         uint256 poolId = allocatePoolId();
-        uint256 totalAmount = 0;
+        totalAmount = 0;
         if (contributions.length > MAX_CONTRIBUTIONS) {
             revert("TOO_MANY_CONTRIBUTIONS");
         }
@@ -166,9 +194,9 @@ contract PoolDepositU is IPoolDeposit2 {
             Contribution calldata contribution = contributions[i];
             uint256 contribAmount = contribution.amount;
             totalAmount += contribAmount;
-            require(contribAmount >= minContributions[token], "WRONG_AMOUNT");
+            require(contribAmount >= minDeposits[token], "WRONG_AMOUNT");
             require(totalAmount >= contribAmount, "INTEGRITY_OVERFLOW_ERROR");
-            string depositId = allocateDepositId();
+            string memory depositId = allocateDepositId();
             emit Deposit(
                 depositId,
                 contribution.contributor,
@@ -179,23 +207,7 @@ contract PoolDepositU is IPoolDeposit2 {
         }
         require(totalAmount > 0, "WRONG_AMOUNT");
         emit PooledDeposit(poolId, totalAmount, token);
-        if (token == address(0)) {
-            require(msg.value >= totalAmount, "VALUE_TOO_SMALL");
-            if (msg.value - totalAmount >= MIN_REFUND) {
-                (bool success, ) = msg.sender.call{
-                    value: msg.value - totalAmount
-                }("");
-                require(success, "REFUND_FAILED");
-            } 
-        } else {
-            bool success = makeTransferFrom(
-                msg.sender,
-                rabbit,
-                totalAmount,
-                token
-            );
-            require(success, "TRANSFER_FAILED");
-        }
+        return totalAmount;
     }
 
     // There is no reason for the contract to hold any tokens as its only
@@ -265,11 +277,10 @@ contract PoolDepositU is IPoolDeposit2 {
             );
     }
 
-    function tokenCall(
-        address token,
-        bytes memory data
-    ) private returns (bool) {
-        (bool success, bytes memory returndata) = token.call(data);
+    function tokenCall(address token, bytes memory data) private returns (bool) {
+        (bool success, bytes memory returndata) = token.call(
+            data
+        );
         if (success) {
             if (returndata.length > 0) {
                 success = abi.decode(returndata, (bool));

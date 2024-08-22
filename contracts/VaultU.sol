@@ -14,7 +14,6 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
     string constant STAKE_PREFIX = "s_";
     string constant CONTRACT_SUFFIX = "_rbxv";
     address public timelock;
-    address public owner;
 
     address public rabbitx;
     address public defaultToken;
@@ -22,13 +21,20 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
     mapping(address => uint256) public minStakes;
     bool public ownerIsSoleAdmin;
 
-
     mapping(address => mapping(uint256 => bool)) public signers;
 
-    string nextStakeNum;
+    uint256 nextStakeNum;
 
-    event AddRole(address indexed user, uint256 indexed role, address indexed caller);
-    event RemoveRole(address indexed user, uint256 indexed role, address indexed caller);
+    event AddRole(
+        address indexed user,
+        uint256 indexed role,
+        address indexed caller
+    );
+    event RemoveRole(
+        address indexed user,
+        uint256 indexed role,
+        address indexed caller
+    );
     event Withdrawal(address indexed to, uint256 amount, address indexed token);
     event SetRabbitX(address indexed rabbitx);
     event SupportToken(address token, uint256 minStake);
@@ -38,13 +44,6 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
         require(msg.sender == timelock, "ONLY_TIMELOCK");
         _;
     }
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "ONLY_OWNER");
-        _;
-    }
-
-    event SetOwner(address indexed owner);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -59,35 +58,43 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
         uint256 _minStake,
         address[] memory _otherTokens,
         uint256[] memory _minStakes
-    )public initializer {
+    ) public initializer {
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
+
         nextStakeNum = 1;
         timelock = _timelock;
-        transferOwnership(_owner);
         signers[_owner][ADMIN_ROLE] = true;
         signers[_owner][TREASURER_ROLE] = true;
         rabbitx = _rabbitx;
         defaultToken = _defaultToken;
         supportedTokens[_defaultToken] = true;
         minStakes[_defaultToken] = _minStake;
-        for (address i = 0; i < _otherTokens.length; i++) {
+        for (uint256 i = 0; i < _otherTokens.length; i++) {
             address token = _otherTokens[i];
             supportedTokens[token] = true;
             minStakes[token] = _minStakes[i];
         }
     }
-    
+
     modifier onlyAdmin() {
         if (ownerIsSoleAdmin) {
-            require(msg.sender == owner, "NOT_OWNER");
+            address currentOwner = owner();
+            require(msg.sender == currentOwner, "NOT_OWNER");
         } else {
             require(signers[msg.sender][ADMIN_ROLE], "NOT_AN_ADMIN");
         }
         _;
     }
 
-    function supportToken(address _token, uint256 _minStake) external onlyOwner {
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyTimelock {}
+
+    function supportToken(
+        address _token,
+        uint256 _minStake
+    ) external onlyOwner {
         supportedTokens[_token] = true;
         minStakes[_token] = _minStake;
         emit SupportToken(_token, _minStake);
@@ -98,32 +105,35 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
         emit UnsupportToken(_token);
     }
 
-    function allocateStakeId() private returns (string) {
+    function allocateStakeId() private returns (string memory) {
         uint256 stakeNum = nextStakeNum;
         nextStakeNum++;
-        return string(
-            abi.encodePacked(
-                STAKE_PREFIX,
-                Strings.toString(stakeNum),
-                CONTRACT_SUFFIX
-            )
-        );
+        return
+            string(
+                abi.encodePacked(
+                    STAKE_PREFIX,
+                    Strings.toString(stakeNum),
+                    CONTRACT_SUFFIX
+                )
+            );
     }
 
     function stake(uint256 amount) external {
         stakeToken(amount, defaultToken);
     }
 
-    function stakeToken(uint256 amount, address token) external {
+    function stakeToken(uint256 amount, address token) public {
         require(supportedTokens[token], "UNSUPPORTED_TOKEN");
-        uint256 minStake = minStakes[token];
-        require(amount >= minDeposit, "AMOUNT_TOO_SMALL");
-        string stakeId = allocateStakeId();
-        emit Stake(stakeId, msg.sender, amount);
+        require(amount >= minStakes[token], "AMOUNT_TOO_SMALL");
+        string memory stakeId = allocateStakeId();
+        emit Stake(stakeId, msg.sender, amount, token);
+        uint256 prevBalance = IERC20(token).balanceOf(rabbitx);
         require(
-            makeTransferFrom(msg.sender, bfx, amount, token),
+            makeTransferFrom(msg.sender, rabbitx, amount, token),
             "TRANSFER_FAILED"
         );
+        uint256 newBalance = IERC20(token).balanceOf(rabbitx);
+        require(newBalance == amount + prevBalance, "NOT_ENOUGH_TRANSFERRED");
     }
 
     /**
@@ -135,7 +145,8 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
      */
     function isAdmin(address user) external view returns (bool) {
         if (ownerIsSoleAdmin) {
-            return user == owner;
+            address currentOwner = owner();
+            return user == currentOwner;
         } else {
             return signers[user][ADMIN_ROLE];
         }
@@ -154,7 +165,7 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
         require(supportedTokens[native], "UNSUPPORTED_TOKEN");
         uint256 minStake = minStakes[native];
         require(msg.value >= minStake, "AMOUNT_TOO_SMALL");
-        uint256 stakeId = allocateStakeId();
+        string memory stakeId = allocateStakeId();
         emit Stake(stakeId, msg.sender, msg.value, native);
     }
 
@@ -263,7 +274,10 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
      * @param role the role to check
      * @return true if the user has the specified role
      */
-    function isValidSigner(address signer, uint256 role) external view returns (bool) {
+    function isValidSigner(
+        address signer,
+        uint256 role
+    ) external view returns (bool) {
         return signers[signer][role];
     }
 
@@ -300,18 +314,20 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
     }
 
     function makeOwnerAdmin() external onlyOwner {
-        signers[owner][ADMIN_ROLE] = true;
+        address currentOwner = owner();
+        signers[currentOwner][ADMIN_ROLE] = true;
     }
 
     function setOwnerIsSoleAdmin(bool value) external onlyOwner {
         ownerIsSoleAdmin = value;
     }
 
-    function setOwner(address _owner) external onlyTimelock {
-        owner = _owner;
-        emit SetOwner(_owner);
+    function transferOwnership(
+        address newOwner
+    ) public virtual override onlyTimelock {
+        require(newOwner != address(0), "ZERO_OWNER");
+        _transferOwnership(newOwner);
     }
-
 
     /**
      * @notice sets the address of the rabbit exchange contract
@@ -395,10 +411,11 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
             );
     }
 
-    function tokenCall(address token, bytes memory data) private returns (bool) {
-        (bool success, bytes memory returndata) = token.call(
-		data
-	);
+    function tokenCall(
+        address token,
+        bytes memory data
+    ) private returns (bool) {
+        (bool success, bytes memory returndata) = token.call(data);
         if (success) {
             if (returndata.length > 0) {
                 success = abi.decode(returndata, (bool));

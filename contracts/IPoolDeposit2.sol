@@ -15,13 +15,15 @@ interface IPoolDeposit2 {
     function pooledDeposit(Contribution[] calldata contributions) external;
     function depositToken(
         address contributor,
-        address token,
-        uint256 amount
+        uint256 amount,
+        address token
     ) external;
     function pooledDepositToken(
         Contribution[] calldata contributions,
         address token
     ) external;
-    function depositNative(address contributor, uint256 amount) external;
-    function pooledDepositNative(Contribution[] calldata contributions) external;
+    function depositNative(address contributor) external payable;
+    function pooledDepositNative(
+        Contribution[] calldata contributions
+    ) external payable;
 }

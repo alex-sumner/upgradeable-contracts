@@ -6,7 +6,8 @@ interface IVault2 {
     event Stake(
         string id,
         address indexed trader,
-        uint256 amount
+        uint256 amount,
+        address indexed token
     );
 
     function isValidSigner(

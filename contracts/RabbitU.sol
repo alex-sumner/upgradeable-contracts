@@ -71,7 +71,6 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
 
         EIP712VerifierU.__EIP712VerifierU_init("RabbitXWithdrawal", "1", _signer);
         timelock = _timelock;
-        transferOwnership(_owner);
         defaultToken = _defaultToken;
         supportedTokens[_defaultToken] = true;
         minDeposits[_defaultToken] = _minDeposit;
@@ -216,8 +215,7 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
 
     function handleDeposit(uint256 amount, address token) internal {
         require(supportedTokens[token], "UNSUPPORTED_TOKEN");
-        uint256 minDeposit = minDeposits[token];
-        require(amount >= minDeposit, "AMOUNT_TOO_SMALL");
+        require(amount >= minDeposits[token], "AMOUNT_TOO_SMALL");
         string memory depositId = allocateDepositId();
         emit Deposit(depositId, msg.sender, amount, token);
         uint256 prevBalance = IERC20(token).balanceOf(address(this));
@@ -244,9 +242,9 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         emit Deposit(depositId, msg.sender, msg.value, native);
     }
 
-    function changeOwner(address newOwner) external onlyTimelock {
+    function transferOwnership(address newOwner) public virtual override onlyTimelock {
         require(newOwner != address(0), "ZERO_OWNER");
-        transferOwnership(newOwner);
+        _transferOwnership(newOwner);
     }
 
     function changeSigner(address new_signer) external onlyOwner {
