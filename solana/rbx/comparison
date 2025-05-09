@@ -1,0 +1,18 @@
+script:
+
+signing wallet: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Contract (Solana): GAf2cuBtQG6JbR5PtHaJ2jtaeCpon81ViPJzvwFhUPBV
+Withdrawal ID: 1743845953
+Token: So11111111111111111111111111111111111111112
+Trader: GaK6K2tvSvZ2Y6pKa4HKRBdYBwovURCtRW4WgPkukT22
+Amount: 50000000
+
+test:
+
+signing wallet: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Contract (Solana): GAf2cuBtQG6JbR5PtHaJ2jtaeCpon81ViPJzvwFhUPBV
+Withdrawal ID: 12345
+Token: AVAz82fV7XdxuoSwW6XsB15G2B8mYmtqCfH8cYCWCc3R
+Trader: Fz3VcoKvJEfBpkHtxcAiKub7ZqVL7hzJGfrgpQuAAJqx
+Amount: 500000
+

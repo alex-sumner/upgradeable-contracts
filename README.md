@@ -1,13 +1,18 @@
-# Sample Hardhat Project
+# Repository Overview
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+There are a lot of contracts and scripts here. Most are already deployed in production.
 
-Try running some of the following tasks:
+The ones I'd love you to try your agent on are:
 
-```shell
-npx hardhat help
-npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.ts
-```
+1. The Solana program in `solana/rbx/programs/rbx/src/lib.rs`
+2. The Solidity contract in `contracts/Vault7540.sol`
+
+Neither of those has been audited or deployed in production yet.
+
+The associated tests are in:
+- `solana/rbx/tests`
+- `test/vault7540.test.ts`
+- `test/rabbit_vault_integration.test.ts`
+
+
+

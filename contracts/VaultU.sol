@@ -12,7 +12,7 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
     uint256 public constant TRADER_ROLE = 1;
     uint256 public constant TREASURER_ROLE = 2;
     string constant STAKE_PREFIX = "s_";
-    string constant CONTRACT_SUFFIX = "_rbxv";
+    string constant CONTRACT_SUFFIX = "_rbxv_s";
     address public timelock;
 
     address public rabbitx;
@@ -167,6 +167,8 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
         require(msg.value >= minStake, "AMOUNT_TOO_SMALL");
         string memory stakeId = allocateStakeId();
         emit Stake(stakeId, msg.sender, msg.value, native);
+        (bool success, ) = rabbitx.call{value: msg.value}("");
+        require(success, "TRANSFER_FAILED");
     }
 
     /**
@@ -334,11 +336,11 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
      *
      * @dev WARNING incorrect setting could lead to loss of funds when
      * calling makeDeposit, normally set during deployment
-     * @dev only the vault owner can call this function
+     * @dev only the timelock can call this function
      *
      * @param _rabbitx the address of the rabbit exchange contract
      */
-    function setRabbit(address _rabbitx) external onlyOwner {
+    function setRabbit(address _rabbitx) external onlyTimelock {
         rabbitx = _rabbitx;
         emit SetRabbitX(_rabbitx);
     }
@@ -361,7 +363,6 @@ contract VaultU is IVault2, UUPSUpgradeable, OwnableUpgradeable {
         uint256 amount,
         address token
     ) external onlyOwner {
-        require(supportedTokens[token], "UNSUPPORTED_TOKEN");
         require(amount > 0, "WRONG_AMOUNT");
         require(to != address(0), "ZERO_TO_ADDRESS");
         bool success = makeTransfer(to, amount, token);

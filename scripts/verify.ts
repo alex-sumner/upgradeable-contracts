@@ -7,6 +7,7 @@ export async function verify(address: string, constructorArguments: any[] = []) 
         await run("verify:verify", {
             address: address,
             constructorArguments: constructorArguments,
+            force: true,
         });
         console.log("Contract verified successfully");
     } catch (e: any) {

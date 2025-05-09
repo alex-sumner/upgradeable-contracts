@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -11,7 +11,7 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
     uint256 constant MAX_CONTRIBUTIONS = 100;
     uint256 constant MIN_REFUND = 1e15;
     string constant DEPOSIT_PREFIX = "d_";
-    string constant CONTRACT_SUFFIX = "_rbxp";
+    string constant CONTRACT_SUFFIX = "_rbxp_s";
     address public timelock;
     address public rabbit;
     address public defaultToken;
@@ -23,8 +23,8 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
 
     event Withdrawal(address indexed to, uint256 amount, address indexed token);
     event SetRabbit(address indexed rabbit);
-    event SupportToken(address token, uint256 minDeposit);
-    event UnsupportToken(address token);
+    event SupportToken(address indexed token, uint256 minDeposit);
+    event UnsupportToken(address indexed token);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -54,7 +54,7 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
             minDeposits[token] = _minDeposits[i];
         }
         nextDepositNum = 1;
-        nextPoolId = 1000;
+        nextPoolId = 10000;
     }
 
     modifier onlyTimelock() {
@@ -100,7 +100,7 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
     function individualDeposit(address contributor, uint256 amount) external {
         require(amount >= minDeposits[defaultToken], "AMOUNT_TOO_SMALL");
         string memory depositId = allocateDepositId();
-        emit Deposit(depositId, contributor, amount, 0, defaultToken);
+        emit Deposit(depositId, contributor, amount, defaultToken, 0);
         bool success = makeTransferFrom(
             msg.sender,
             rabbit,
@@ -118,7 +118,7 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
         require(supportedTokens[token], "UNSUPPORTED_TOKEN");
         require(amount >= minDeposits[token], "AMOUNT_TOO_SMALL");
         string memory depositId = allocateDepositId();
-        emit Deposit(depositId, contributor, amount, 0, token);
+        emit Deposit(depositId, contributor, amount, token, 0);
         uint256 prevBalance = IERC20(token).balanceOf(rabbit);
         bool success = makeTransferFrom(
             msg.sender,
@@ -137,7 +137,7 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
         uint256 minDeposit = minDeposits[native];
         require(msg.value >= minDeposit, "AMOUNT_TOO_SMALL");
         string memory depositId = allocateDepositId();
-        emit Deposit(depositId, contributor, msg.value, 0, native);
+        emit Deposit(depositId, contributor, msg.value, native, 0);
         (bool success, ) = rabbit.call{value: msg.value}("");
         require(success, "TRANSFER_FAILED");
     }
@@ -158,8 +158,10 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
     ) external payable {
         uint256 totalAmount = pooledDepositCommon(contributions, address(0));
         require(msg.value >= totalAmount, "VALUE_TOO_SMALL");
+        (bool success, ) = rabbit.call{value: totalAmount}("");
+        require(success, "TRANSFER_FAILED");
         if (msg.value - totalAmount >= MIN_REFUND) {
-            (bool success, ) = msg.sender.call{
+            (success, ) = msg.sender.call{
                 value: msg.value - totalAmount
             }("");
             require(success, "REFUND_FAILED");
@@ -201,8 +203,8 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
                 depositId,
                 contribution.contributor,
                 contribAmount,
-                poolId,
-                token
+                token,
+                poolId
             );
         }
         require(totalAmount > 0, "WRONG_AMOUNT");
@@ -222,7 +224,6 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
         uint256 amount,
         address token
     ) external onlyOwner {
-        require(supportedTokens[token], "UNSUPPORTED_TOKEN");
         require(amount > 0, "WRONG_AMOUNT");
         require(to != address(0), "ZERO_TO_ADDRESS");
         bool success = makeTransfer(to, amount, token);
@@ -238,9 +239,14 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
         emit Withdrawal(to, amount, address(0));
     }
 
-    function setRabbit(address _rabbit) external onlyOwner {
+    function setRabbit(address _rabbit) external onlyTimelock {
         rabbit = _rabbit;
         emit SetRabbit(_rabbit);
+    }
+
+    function transferOwnership(address newOwner) public virtual override onlyTimelock {
+        require(newOwner != address(0), "ZERO_OWNER");
+        _transferOwnership(newOwner);
     }
 
     function makeTransfer(
@@ -292,6 +298,6 @@ contract PoolDepositU is IPoolDeposit2, UUPSUpgradeable, OwnableUpgradeable {
     }
 
     function getVersion() public pure returns (uint256) {
-        return 1;
+        return 21;
     }
 }

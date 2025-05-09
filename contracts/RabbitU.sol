@@ -12,7 +12,7 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
     uint256 constant UNLOCKED = 1;
     uint256 constant LOCKED = 2;
     string constant DEPOSIT_PREFIX = "d_";
-    string constant CONTRACT_SUFFIX = "_rbx";
+    string constant CONTRACT_SUFFIX = "_rbx_s";
 
     address public timelock;
     address public defaultToken;
@@ -20,6 +20,7 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
     mapping(uint256 => bool) public processedWithdrawals;
     mapping(address => bool) public supportedTokens;
     mapping(address => uint256) public minDeposits;
+    mapping(address => bool) public authorizedVaults;
 
     uint256 nextDepositNum;
     uint256 reentryLockStatus;
@@ -28,17 +29,26 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         string id,
         address indexed trader,
         uint256 amount,
-        address indexed token);
-    event Withdrawal(
+        address indexed token
+    );
+    event WithdrawalReceipt(
         uint256 indexed id,
         address indexed trader,
         uint256 amount,
-        address token
+        address indexed token
     );
     event SetOwner(address indexed owner);
     event SetSigner(address indexed signer);
-    event SupportToken(address token, uint256 minDeposit);
-    event UnsupportToken(address token);
+    event SupportToken(address indexed token, uint256 minDeposit);
+    event UnsupportToken(address indexed token);
+    event AuthorizeVault(address indexed vault);
+    event RevokeVault(address indexed vault);
+    event VaultWithdrawal(
+        address indexed vault,
+        address indexed receiver,
+        address indexed asset,
+        uint256 amount
+    );
 
     modifier onlyTimelock() {
         require(msg.sender == timelock, "ONLY_TIMELOCK");
@@ -69,7 +79,11 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         __Ownable_init(_owner);
         __UUPSUpgradeable_init();
 
-        EIP712VerifierU.__EIP712VerifierU_init("RabbitXWithdrawal", "1", _signer);
+        EIP712VerifierU.__EIP712VerifierU_init(
+            "RabbitXWithdrawal",
+            "1",
+            _signer
+        );
         timelock = _timelock;
         defaultToken = _defaultToken;
         supportedTokens[_defaultToken] = true;
@@ -79,7 +93,7 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
             supportedTokens[token] = true;
             minDeposits[token] = _minDeposits[i];
         }
-        nextDepositNum = 1;
+        nextDepositNum = 1000;
         reentryLockStatus = UNLOCKED;
     }
 
@@ -99,7 +113,7 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         bool valid = verify(digest, v, r, s);
         require(valid, "INVALID_SIGNATURE");
 
-        emit Withdrawal(id, trader, amount, defaultToken);
+        emit WithdrawalReceipt(id, trader, amount, defaultToken);
         bool success = makeTransfer(trader, amount, defaultToken);
         require(success, "TRANSFER_FAILED");
     }
@@ -121,7 +135,7 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         bool valid = verify(digest, v, r, s);
         require(valid, "INVALID_SIGNATURE");
 
-        emit Withdrawal(id, trader, amount, token);
+        emit WithdrawalReceipt(id, trader, amount, token);
         bool success = makeTransfer(trader, amount, token);
         require(success, "TRANSFER_FAILED");
     }
@@ -143,8 +157,8 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         bool valid = verify(digest, v, r, s);
         require(valid, "INVALID_SIGNATURE");
 
-        emit Withdrawal(id, trader, amount, native);
-        (bool success, ) = msg.sender.call{value: amount}("");
+        emit WithdrawalReceipt(id, trader, amount, native);
+        (bool success, ) = trader.call{value: amount}("");
         require(success, "TRANSFER_FAILED");
     }
 
@@ -179,10 +193,14 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         digest = _hashTypedDataV4(keccak256(encoded));
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyTimelock {
-    }
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyTimelock {}
 
-    function supportToken(address token, uint256 minDeposit) external onlyOwner {
+    function supportToken(
+        address token,
+        uint256 minDeposit
+    ) external onlyOwner {
         supportedTokens[token] = true;
         minDeposits[token] = minDeposit;
         emit SupportToken(token, minDeposit);
@@ -196,16 +214,17 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
     function allocateDepositId() private returns (string memory depositId) {
         uint256 depositNum = nextDepositNum;
         nextDepositNum++;
-        return string(
-            abi.encodePacked(
-                DEPOSIT_PREFIX,
-                Strings.toString(depositNum),
-                CONTRACT_SUFFIX
-            )
-        );
+        return
+            string(
+                abi.encodePacked(
+                    DEPOSIT_PREFIX,
+                    Strings.toString(depositNum),
+                    CONTRACT_SUFFIX
+                )
+            );
     }
 
-    function deposit(uint256 amount) external nonReentrant{
+    function deposit(uint256 amount) external nonReentrant {
         handleDeposit(amount, defaultToken);
     }
 
@@ -219,7 +238,12 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         string memory depositId = allocateDepositId();
         emit Deposit(depositId, msg.sender, amount, token);
         uint256 prevBalance = IERC20(token).balanceOf(address(this));
-        bool success = makeTransferFrom(msg.sender, address(this), amount, token);
+        bool success = makeTransferFrom(
+            msg.sender,
+            address(this),
+            amount,
+            token
+        );
         require(success, "TRANSFER_FAILED");
         uint256 newBalance = IERC20(token).balanceOf(address(this));
         require(newBalance == amount + prevBalance, "NOT_ENOUGH_TRANSFERRED");
@@ -242,12 +266,14 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
         emit Deposit(depositId, msg.sender, msg.value, native);
     }
 
-    function transferOwnership(address newOwner) public virtual override onlyTimelock {
+    function transferOwnership(
+        address newOwner
+    ) public virtual override onlyTimelock {
         require(newOwner != address(0), "ZERO_OWNER");
         _transferOwnership(newOwner);
     }
 
-    function changeSigner(address new_signer) external onlyOwner {
+    function changeSigner(address new_signer) external onlyTimelock {
         require(new_signer != address(0), "ZERO_SIGNER");
         external_signer = new_signer;
         emit SetSigner(new_signer);
@@ -287,10 +313,11 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
             );
     }
 
-    function tokenCall(address token, bytes memory data) private returns (bool) {
-        (bool success, bytes memory returndata) = token.call(
-            data
-        );
+    function tokenCall(
+        address token,
+        bytes memory data
+    ) private returns (bool) {
+        (bool success, bytes memory returndata) = token.call(data);
         if (success) {
             if (returndata.length > 0) {
                 success = abi.decode(returndata, (bool));
@@ -302,6 +329,54 @@ contract RabbitU is EIP712VerifierU, UUPSUpgradeable, OwnableUpgradeable {
     }
 
     function getVersion() public pure returns (uint256) {
-        return 2;
+        return 22;
+    }
+
+    /**
+     * @notice Authorizes a vault to withdraw assets directly
+     * @param vault The address of the vault to authorize
+     */
+    function authorizeVault(address vault) external onlyTimelock {
+        require(vault != address(0), "ZERO_ADDRESS");
+        authorizedVaults[vault] = true;
+        emit AuthorizeVault(vault);
+    }
+
+    /**
+     * @notice Revokes a vault's authorization to withdraw assets
+     * @param vault The address of the vault to revoke authorization from
+     */
+    function revokeVault(address vault) external onlyTimelock {
+        authorizedVaults[vault] = false;
+        emit RevokeVault(vault);
+    }
+
+    /**
+     * @notice Allows authorized vaults to withdraw assets
+     * @param asset The token address to withdraw (e.g., USDC)
+     * @param amount The amount to withdraw
+     * @param receiver The vault address that will receive the assets
+     */
+    function withdrawToVault(
+        address asset,
+        uint256 amount,
+        address receiver
+    ) external nonReentrant {
+        // Security checks
+        require(authorizedVaults[msg.sender], "NOT_AUTHORIZED_VAULT");
+        require(supportedTokens[asset], "UNSUPPORTED_TOKEN");
+        require(amount > 0, "AMOUNT_TOO_SMALL");
+        require(receiver != address(0), "INVALID_RECEIVER");
+
+        // Check if the exchange has enough balance
+        uint256 exchangeBalance = IERC20(asset).balanceOf(address(this));
+        require(exchangeBalance >= amount, "INSUFFICIENT_BALANCE");
+
+        // Emit an event for tracking
+        emit VaultWithdrawal(msg.sender, receiver, asset, amount);
+
+        // Transfer the assets from the exchange to the receiver (vault)
+        bool success = makeTransfer(receiver, amount, asset);
+        require(success, "TRANSFER_FAILED");
     }
 }

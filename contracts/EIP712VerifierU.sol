@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable
 
 contract EIP712VerifierU is EIP712Upgradeable {
     address public external_signer;
+    uint256[50] private __gap;
 
     function __EIP712VerifierU_init(string memory domainName, string memory version, address signer) internal initializer {
         require(signer != address(0), "ZERO_SIGNER");
