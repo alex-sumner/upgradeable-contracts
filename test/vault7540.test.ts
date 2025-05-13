@@ -326,11 +326,11 @@ describe("Vault7540 Tests", function () {
 
     // Check request details using request ID from controller requests
     const request = await vault.getDepositRequest(requestId);
-    expect(request[0]).to.equal(await user1.getAddress()); // controller
-    expect(request[1]).to.equal(await user1.getAddress()); // owner
-    expect(request[2]).to.equal(depositAmount); // assets
-    expect(request[3]).to.equal(0); // shares (not yet processed)
-    expect(request[5]).to.equal(RequestStatus.Pending); // status
+    expect(request.controller).to.equal(await user1.getAddress());
+    expect(request.owner).to.equal(await user1.getAddress());
+    expect(request.assets).to.equal(depositAmount);
+    expect(request.shares).to.equal(0); // (not yet processed)
+    expect(request.status).to.equal(RequestStatus.Pending);
 
     // Check balances updated correctly
     expect(await usdc.balanceOf(await user1.getAddress())).to.equal(userInitialBalance - depositAmount);
@@ -369,8 +369,8 @@ describe("Vault7540 Tests", function () {
 
     // Check request updated
     const request = await vault.getDepositRequest(requestId);
-    expect(request[5]).to.equal(RequestStatus.Claimable); // status
-    expect(request[3]).to.be.gt(0); // shares should be set
+    expect(request.status).to.equal(RequestStatus.Claimable);
+    expect(request.shares).to.be.gt(0); // should be set
 
     // Check pending/claimable status with correct parameter order (requestId, controller)
     expect(await vault.pendingDepositRequest(ethers.toBigInt(requestId), await user1.getAddress())).to.equal(0); // Not pending - returns 0
@@ -408,7 +408,7 @@ describe("Vault7540 Tests", function () {
 
     // Get share amount from request
     const request = await vault.getDepositRequest(requestId);
-    const sharesToMint = request[3];
+    const sharesToMint = request.shares;
 
     // Claim deposit through deposit function
     await expect(claimDepositWithController(user1, depositAmount, await user1.getAddress(), await user1.getAddress()))
@@ -417,7 +417,7 @@ describe("Vault7540 Tests", function () {
 
     // Check request updated to claimed
     const requestAfter = await vault.getDepositRequest(requestId);
-    expect(requestAfter[5]).to.equal(RequestStatus.Claimed);
+    expect(requestAfter.status).to.equal(RequestStatus.Claimed);
 
     // Check shares minted to user
     expect(await vault.balanceOf(await user1.getAddress())).to.equal(sharesToMint);
@@ -446,7 +446,7 @@ describe("Vault7540 Tests", function () {
     const controllerRequests = await vault.getControllerDepositRequests(await user1.getAddress());
     const requestId = controllerRequests[0];
     const request = await vault.getDepositRequest(requestId);
-    expect(request[5]).to.equal(RequestStatus.Cancelled); // status
+    expect(request.status).to.equal(RequestStatus.Cancelled);
 
     // Check assets returned to user
     expect(await usdc.balanceOf(await user1.getAddress())).to.equal(userInitialBalance);
@@ -635,12 +635,12 @@ describe("Vault7540 Tests", function () {
 
     // Check request details
     const request = await vault.getRedeemRequest(requestId);
-    expect(request[0]).to.equal(await user1.getAddress()); // controller
-    expect(request[1]).to.equal(await user1.getAddress()); // owner
-    expect(request[2]).to.equal(await user1.getAddress()); // receiver
-    expect(request[3]).to.equal(userShares); // shares
-    expect(request[4]).to.equal(0); // assets (not yet processed)
-    expect(request[6]).to.equal(RequestStatus.Pending); // status
+    expect(request.controller).to.equal(await user1.getAddress());
+    expect(request.owner).to.equal(await user1.getAddress());
+    expect(request.receiver).to.equal(await user1.getAddress());
+    expect(request.shares).to.equal(userShares);
+    expect(request.assets).to.equal(0); // (not yet processed)
+    expect(request.status).to.equal(RequestStatus.Pending);
 
     // Check shares transferred to vault (user1 no longer has shares)
     expect(await vault.balanceOf(await user1.getAddress())).to.equal(0);
@@ -698,8 +698,8 @@ describe("Vault7540 Tests", function () {
 
     // Check request updated
     const request = await vault.getRedeemRequest(redeemRequestId);
-    expect(request[6]).to.equal(RequestStatus.Claimable); // status
-    expect(request[4]).to.be.gt(0); // assets should be set
+    expect(request.status).to.equal(RequestStatus.Claimable);
+    expect(request.assets).to.be.gt(0); // should be set
 
     // Check amount values
     expect(await vault.pendingRedeemRequest(ethers.toBigInt(redeemRequestId), await user1.getAddress())).to.equal(0);
@@ -742,7 +742,7 @@ describe("Vault7540 Tests", function () {
 
     // Get asset amount from request
     const request = await vault.getRedeemRequest(redeemRequestId);
-    const assetsToWithdraw = request[4];
+    const assetsToWithdraw = request.assets;
 
     // Claim withdrawal through withdraw function
     await expect(claimWithdrawalWithController(user1, 0n, await user1.getAddress(), await user1.getAddress()))
@@ -751,7 +751,7 @@ describe("Vault7540 Tests", function () {
 
     // Check request updated to claimed
     const requestAfter = await vault.getRedeemRequest(redeemRequestId);
-    expect(requestAfter[6]).to.equal(RequestStatus.Claimed);
+    expect(requestAfter.status).to.equal(RequestStatus.Claimed);
 
     // Check user received their assets
     const userBalanceAfter = await usdc.balanceOf(await user1.getAddress());
@@ -793,7 +793,7 @@ describe("Vault7540 Tests", function () {
 
     // Check request updated
     const request = await vault.getRedeemRequest(redeemRequestId);
-    expect(request[6]).to.equal(RequestStatus.Cancelled); // status
+    expect(request.status).to.equal(RequestStatus.Cancelled);
 
     // Check shares returned to user
     expect(await vault.balanceOf(await user1.getAddress())).to.equal(userShares);
@@ -1044,7 +1044,7 @@ describe("Vault7540 Tests", function () {
 
     // Get assets to be withdrawn
     const request = await vault.getRedeemRequest(redeemId);
-    const assetsToWithdraw = request[4];
+    const assetsToWithdraw = request.assets;
 
     // Calculate expected assets with updated NAV
     // Now that we've updated the NAV, the withdrawal should be calculated with the new NAV
@@ -1579,8 +1579,8 @@ describe("Vault7540 Tests", function () {
     // Verify both deposits are pending
     const request1Before = await vault.getDepositRequest(user1DepositId);
     const request2Before = await vault.getDepositRequest(user2DepositId);
-    expect(request1Before[5]).to.equal(RequestStatus.Pending); // status
-    expect(request2Before[5]).to.equal(RequestStatus.Pending); // status
+    expect(request1Before.status).to.equal(RequestStatus.Pending);
+    expect(request2Before.status).to.equal(RequestStatus.Pending);
 
     // Update NAV, which should trigger processing of pending deposits
     await vault.connect(navUpdater).updateNav(ethers.parseUnits("20", 6), ethers.parseUnits("20", 18));
@@ -1588,12 +1588,12 @@ describe("Vault7540 Tests", function () {
     // Verify deposits are now claimable
     const request1After = await vault.getDepositRequest(user1DepositId);
     const request2After = await vault.getDepositRequest(user2DepositId);
-    expect(request1After[5]).to.equal(RequestStatus.Claimable); // status
-    expect(request2After[5]).to.equal(RequestStatus.Claimable); // status
+    expect(request1After.status).to.equal(RequestStatus.Claimable);
+    expect(request2After.status).to.equal(RequestStatus.Claimable);
 
     // Verify shares were minted (deposits were processed)
-    expect(request1After[3]).to.be.gt(0); // shares
-    expect(request2After[3]).to.be.gt(0); // shares
+    expect(request1After[3]).to.be.gt(0);
+    expect(request2After[3]).to.be.gt(0);
   });
 
   it("should process eligible redeem requests when updating NAV", async function () {
@@ -1635,8 +1635,8 @@ describe("Vault7540 Tests", function () {
     // Verify both are pending
     const redeem1Before = await vault.getRedeemRequest(user1RedeemId);
     const redeem2Before = await vault.getRedeemRequest(user2RedeemId);
-    expect(redeem1Before[6]).to.equal(RequestStatus.Pending); // status
-    expect(redeem2Before[6]).to.equal(RequestStatus.Pending); // status
+    expect(redeem1Before.status).to.equal(RequestStatus.Pending);
+    expect(redeem2Before.status).to.equal(RequestStatus.Pending);
 
     // Verify redeem requests aren't ready yet (delay not met)
     expect(await vault.isRedeemRequestDelayMet(user1RedeemId)).to.be.false;
@@ -1656,11 +1656,11 @@ describe("Vault7540 Tests", function () {
     // Verify redeem requests are now claimable
     const redeem1After = await vault.getRedeemRequest(user1RedeemId);
     const redeem2After = await vault.getRedeemRequest(user2RedeemId);
-    expect(redeem1After[6]).to.equal(RequestStatus.Claimable); // status
-    expect(redeem2After[6]).to.equal(RequestStatus.Claimable); // status
+    expect(redeem1After.status).to.equal(RequestStatus.Claimable);
+    expect(redeem2After.status).to.equal(RequestStatus.Claimable);
 
     // Verify assets were calculated (redeem requests were processed)
-    expect(redeem1After[4]).to.be.gt(0); // assets
-    expect(redeem2After[4]).to.be.gt(0); // assets
+    expect(redeem1After.assets).to.be.gt(0);
+    expect(redeem2After.assets).to.be.gt(0);
   });
 });

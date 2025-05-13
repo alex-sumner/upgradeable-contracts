@@ -75,6 +75,7 @@ contract Vault7540 is
     }
 
     struct RequestForDeposit {
+        uint256 id;
         address controller;
         address owner;
         address sender;
@@ -85,6 +86,7 @@ contract Vault7540 is
     }
 
     struct RequestForRedeem {
+        uint256 id;
         address controller;
         address owner;
         address receiver;
@@ -339,7 +341,14 @@ contract Vault7540 is
     ) public view override returns (uint256 shares) {
         if (globalSupply == 0) {
             // For first deposit, create 1:1 shares (adjusted for decimals)
-            return (assets * 10 ** 18) / (10 ** uint256(_assetDecimals));
+            if (_assetDecimals <= 18) {
+                uint256 decimalDifference = 18 - uint256(_assetDecimals);
+                return assets * (10 ** decimalDifference);
+            } else {
+                // In the unlikely case asset has more than 18 decimals
+                uint256 decimalDifference = uint256(_assetDecimals) - 18;
+                return assets / (10 ** decimalDifference);
+            }
         }
 
         // It's an error if NAV is zero but supply isn't
@@ -360,7 +369,14 @@ contract Vault7540 is
     ) public view override returns (uint256 assets) {
         if (globalSupply == 0) {
             // If no shares exist yet, convert 1:1 (adjusted for decimals)
-            return (shares * (10 ** uint256(_assetDecimals))) / 10 ** 18;
+            if (_assetDecimals <= 18) {
+                uint256 decimalDifference = 18 - uint256(_assetDecimals);
+                return shares / (10 ** decimalDifference);
+            } else {
+                // In the unlikely case asset has more than 18 decimals
+                uint256 decimalDifference = uint256(_assetDecimals) - 18;
+                return shares * (10 ** decimalDifference);
+            }
         }
 
         // It's an error if NAV is zero but supply isn't
@@ -677,6 +693,7 @@ contract Vault7540 is
         // Create deposit request
         requestId = nextRequestId++;
         depositRequests[requestId] = RequestForDeposit({
+            id: requestId,
             controller: controller,
             owner: owner,
             sender: msg.sender,
@@ -748,6 +765,7 @@ contract Vault7540 is
         // Create redemption request
         requestId = nextRequestId++;
         redeemRequests[requestId] = RequestForRedeem({
+            id: requestId,
             controller: controller,
             owner: owner,
             receiver: receiver,
@@ -767,25 +785,30 @@ contract Vault7540 is
 
     /**
      * @notice Process a deposit request, making it claimable
-     * @param requestId ID of the deposit request to process
+     * @param request the deposit request to process
      */
-    function _processDeposit(uint256 requestId) private {
-        RequestForDeposit storage request = depositRequests[requestId];
+    function _processDeposit(RequestForDeposit storage request) private {
 
         require(request.status == RequestStatus.Pending, "NOT_PENDING");
 
         // Calculate fee on the assets
         uint256 fee = calculateFee(request.assets, entryFeeRate);
         uint256 assetsAfterFee = request.assets - fee;
-
         // Calculate shares to mint based on current share price
         uint256 sharesToMint;
 
         if (globalSupply == 0) {
             // First deposit, create shares 1:1 with assets
-            sharesToMint =
-                (assetsAfterFee * 10 ** 18) /
-                (10 ** uint256(_assetDecimals));
+
+            // If asset decimals is 6 (like USDC), we need to multiply by 10^12
+            if (_assetDecimals <= 18) {
+                uint256 decimalDifference = 18 - uint256(_assetDecimals);
+                sharesToMint = assetsAfterFee * (10 ** decimalDifference);
+            } else {
+                // In the unlikely case asset has more than 18 decimals
+                uint256 decimalDifference = uint256(_assetDecimals) - 18;
+                sharesToMint = assetsAfterFee / (10 ** decimalDifference);
+            }
 
             // Initialize NAV to match the assets for first deposit
             nav = assetsAfterFee;
@@ -816,22 +839,20 @@ contract Vault7540 is
             "TRANSFER_TO_EXCHANGE_FAILED"
         );
 
-        emit RequestMadeClaimable(requestId, true);
+        emit RequestMadeClaimable(request.id, true);
         // @TODO: Exchange should record this deposit for the vault's account
     }
 
     /**
      * @notice Process a redemption request, making it claimable
-     * @param requestId ID of the redemption request to process
+     * @param request the redemption request to process
      */
-    function _processRedeem(uint256 requestId) private {
-        RequestForRedeem storage request = redeemRequests[requestId];
+    function _processRedeem(RequestForRedeem storage request) private {
 
         require(request.status == RequestStatus.Pending, "NOT_PENDING");
 
         // Calculate actual assets based on current NAV
         uint256 assets = convertToAssets(request.shares);
-
         // Sanity check: In theory, assets should never exceed nav due to the
         // calculation formula. This is a safety check to prevent underflows
         // in case of a calculation edge case or rounding error.
@@ -854,10 +875,13 @@ contract Vault7540 is
         // Burn shares
         _burn(address(this), request.shares);
 
-        // Request assets from RabbitX to be sent to the vault (not directly to the user)
-        requestAssetsFromRabbitX(assetsAfterFee, address(this));
+        // Only request assets from RabbitX if we have assets to withdraw
+        if (assetsAfterFee > 0) {
+            // Request assets from RabbitX to be sent to the vault (not directly to the user)
+            requestAssetsFromRabbitX(assetsAfterFee, address(this));
+        }
 
-        emit RequestMadeClaimable(requestId, false);
+        emit RequestMadeClaimable(request.id, false);
     }
 
     /**
@@ -1122,6 +1146,7 @@ contract Vault7540 is
     /**
      * @notice Get details of a deposit request
      * @param requestId ID of the deposit request
+     * @return id ID of the deposit request
      * @return controller Address of the controller
      * @return owner Address of the owner (recipient of shares)
      * @return assets Amount of assets deposited
@@ -1135,6 +1160,7 @@ contract Vault7540 is
         external
         view
         returns (
+            uint256 id,
             address controller,
             address owner,
             uint256 assets,
@@ -1145,6 +1171,7 @@ contract Vault7540 is
     {
         RequestForDeposit storage request = depositRequests[requestId];
         return (
+            request.id,
             request.controller,
             request.owner,
             request.assets,
@@ -1157,6 +1184,7 @@ contract Vault7540 is
     /**
      * @notice Get details of a redemption request
      * @param requestId ID of the redemption request
+     * @return id ID of the redemption request
      * @return controller Address of the controller
      * @return owner Address of the owner (source of shares)
      * @return receiver Address to receive assets
@@ -1171,6 +1199,7 @@ contract Vault7540 is
         external
         view
         returns (
+            uint256 id,
             address controller,
             address owner,
             address receiver,
@@ -1182,6 +1211,7 @@ contract Vault7540 is
     {
         RequestForRedeem storage request = redeemRequests[requestId];
         return (
+            request.id,
             request.controller,
             request.owner,
             request.receiver,
@@ -1203,8 +1233,10 @@ contract Vault7540 is
         uint256 newNav,
         uint256 newGlobalSupply
     ) external onlyNavUpdater {
-        require(newNav > 0, "INVALID_NAV");
-        require(newGlobalSupply > 0, "INVALID_GLOBAL_SUPPLY");
+        require(newGlobalSupply >= totalSupply(), "LOCAL_SUPPLY_EXCEEDS_GLOBAL");
+        if (newNav == 0) {
+            require(newGlobalSupply == 0, "INVALID_NAV");
+        }
 
         uint256 oldNav = nav;
         uint256 oldGlobalSupply = globalSupply;
@@ -1227,7 +1259,8 @@ contract Vault7540 is
      * @param requestId ID of the deposit request to process
      */
     function processDeposit(uint256 requestId) external onlyAdmin {
-        _processDeposit(requestId);
+        RequestForDeposit storage request = depositRequests[requestId];
+        _processDeposit(request);
     }
 
     /**
@@ -1235,23 +1268,8 @@ contract Vault7540 is
      * @param requestId ID of the redemption request to process
      */
     function processRedeem(uint256 requestId) external onlyAdmin {
-        _processRedeem(requestId);
-    }
-
-    /**
-     * @notice Helper function for processing deposits via external call (for try/catch)
-     * @param requestId ID of the deposit request to process
-     */
-    function _processDepositExternal(uint256 requestId) external onlySelf {
-        _processDeposit(requestId);
-    }
-
-    /**
-     * @notice Helper function for processing redeems via external call (for try/catch)
-     * @param requestId ID of the redeem request to process
-     */
-    function _processRedeemExternal(uint256 requestId) external onlySelf {
-        _processRedeem(requestId);
+        RequestForRedeem storage request = redeemRequests[requestId];
+        _processRedeem(request);
     }
 
     /**
@@ -1260,61 +1278,39 @@ contract Vault7540 is
      */
     function processPendingRequests() internal {
         // Start from the last processed ID + 1 to avoid reprocessing
-        uint256 startId = lastProcessedRequestId + 1;
         uint256 highestProcessedId = lastProcessedRequestId;
-        uint256 firstDelayedRedeemId = type(uint256).max;
+        uint256 firstDelayedRedeemId;
+        bool foundDelayedRedeem = false;
 
         // Process all pending requests up to the current nextRequestId
-        for (uint256 i = startId; i < nextRequestId; i++) {
-            // Check what type of request this is
+        for (uint256 i = lastProcessedRequestId + 1; i < nextRequestId; i++) {
             RequestType requestType = requestTypes[i];
-
             if (requestType == RequestType.Deposit) {
-                // Process pending deposit requests
-                if (depositRequests[i].status == RequestStatus.Pending) {
-                    try this._processDepositExternal(i) {
-                        // Successfully processed
-                        highestProcessedId = i;
-                    } catch {
-                        // Failed to process, continue to next request
-                    }
-                } else {
-                    // If not pending, consider it processed
-                    highestProcessedId = i;
+                RequestForDeposit storage request = depositRequests[i];
+                if (request.status == RequestStatus.Pending) {
+                    _processDeposit(request);
                 }
             } else if (requestType == RequestType.Redeem) {
-                // Check if redeem request is pending
-                if (redeemRequests[i].status == RequestStatus.Pending) {
-                    // Check if it meets the delay requirement
-                    if (isRedeemRequestDelayMet(i)) {
-                        try this._processRedeemExternal(i) {
-                            // Successfully processed
-                            highestProcessedId = i;
-                        } catch {
-                            // Failed to process, continue to next request
-                        }
+                RequestForRedeem storage request = redeemRequests[i];
+                if (request.status == RequestStatus.Pending) {
+                    if (block.timestamp >= request.timestamp + redeemDelay) {
+                        _processRedeem(request);
                     } else {
-                        // This is a redeem request that needs to wait for the delay
-                        // Track the first such request we find
-                        if (firstDelayedRedeemId == type(uint256).max) {
+                        if (!foundDelayedRedeem) {
                             firstDelayedRedeemId = i;
+                            foundDelayedRedeem = true;
                         }
-                        // We don't update highestProcessedId here because this request
-                        // needs to be tried again in the future
                     }
-                } else {
-                    // If not pending, consider it processed
-                    highestProcessedId = i;
                 }
             }
         }
 
-        // If we found a delayed redeem request, we need to set lastProcessedRequestId
-        // to one before it so that we'll start at the delayed redeem on the next run
-        if (firstDelayedRedeemId != type(uint256).max) {
+        // If we found a delayed redeem request, set lastProcessedRequestId
+        // to one before it so we'll try it again on the next run
+        if (foundDelayedRedeem && firstDelayedRedeemId != type(uint256).max) {
             lastProcessedRequestId = firstDelayedRedeemId - 1;
         } else {
-            // No delayed redeem requests found, so we can update to the highest ID we processed
+            // No delayed redeems, so update to the highest ID processed
             lastProcessedRequestId = highestProcessedId;
         }
     }
